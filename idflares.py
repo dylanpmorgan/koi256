@@ -3,35 +3,29 @@ from __future__ import division
 import pdb, glob, sys, os
 import numpy as np
 from matplotlib import pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
-import matplotlib.patches as mpatches
+pyplot.rcParams['figure.figsize'] = (10.0, 8.0)
+
+# Stat functions
 import astropy.table as tbl
 from astropy.io import ascii
 from astropy.stats.funcs import sigma_clip
 from scipy.signal import medfilt
 from scipy.ndimage.filters import gaussian_filter
 from scipy import interpolate
-from scipy.stats import norm
-import json
-from collections import OrderedDict
-from supersmoother import SuperSmoother, LinearSmoother
-
 from pandas import rolling_median
 
-import time
+# For saving a readable output file
+import json
+from collections import OrderedDict
 
-from sklearn.svm import SVR
-from sklearn.grid_search import GridSearchCV
-from sklearn.learning_curve import learning_curve
-from sklearn.kernel_ridge import KernelRidge
-
+# Global variables
 global localPath
 localPath = '/Users/dpmorg/gdrive/research/koi256/'
 
 global period
-period = 1.3786548
+period = 1.3786548 #known period of koi-256
 global ephemeris
-ephemeris = 131.512382665
+ephemeris = 131.512382665 #epemeris of koi-256
 
 # Set up an ordered dictionary to hold all the flares
 class FlareList(list):
@@ -224,7 +218,7 @@ class Lightcurve(object):
 
         #self.measureflares()
 
-    def clean(self,**kwargs):
+    def clean(self):
         #####
         # Remove nans from the lightcurve
         rem_timenans = np.isnan(self.time)
@@ -270,7 +264,7 @@ class Lightcurve(object):
         #####
         # Done
 
-    def ubersmoother(self,**kwargs):
+    def ubersmoother(self):
 
         #######################
         # Initializing variables
@@ -283,13 +277,15 @@ class Lightcurve(object):
         # short-cadence
         if "LC" in self.filename:
             transit_filtsize = 1
-            phase_start, phase_end = 0.73, 0.78
+            phase_start, phase_end = 0.73, 0.77
         elif "SC" in self.filename:
-            #boxcars = [151, 51, 21] #must be odd
             transit_filtsize = 27
             phase_start, phase_end = 0.74, 0.78
         else:
             sys.exit("Unsual file name or type")
+
+        ## List to save outlying data points (aka flare candidates)
+        outliers = []
 
         ##################################################
         # Perform an initial sigma-clipping in phase-space.
@@ -308,12 +304,40 @@ class Lightcurve(object):
         flux_medianfiltered = medfilt(flux_phasesort, int(box_phasesort))
         # 2sigma clipping.
         clip = sigma_clip(flux_phasesort - flux_medianfiltered,2)
+
+        # If check=True, plot phased lightcurve and clipped points
+        if self.check:
+            plt.figure()
+            plt.scatter(phase[phasesort], flux_phasesort,
+                        c='black', s=40, alpha=0.5)
+            plt.scatter(phase[phasesort][clip.mask], flux_phasesort[clip.mask],
+                        c='red', s=50, marker='x',
+                        label='Clipped pts')
+            plt.xlim([0,1])
+            plt.title('Phase-sorted sigma-clipping - good at removing large flares',
+                      fontsize=12)
+            plt.legend()
+
         # Sort the sigma-clip mask into time-spacing.
         clip_timesort = clip[np.argsort(time_phasesort)]
+
+        # Save the clipped indices
+        clipped_point_idx = np.arange(len(clip_timesort))[clip_timesort.mask]
+        outliers = np.concatenate((outliers,clipped_point_idx))
 
         # Interpolate the sigma-clipped flux back into raw time-spacing.
         flux_smooth = np.interp(time, time[~clip_timesort.mask],
                                 flux[~clip_timesort.mask])
+
+        # If check=True, plot phased lightcurve and clipped points
+        if self.check:
+            plt.figure()
+            plt.plot(time, flux, c='black', lw=3, alpha=0.8, label='raw')
+            plt.plot(time, flux_smooth, c='red', lw=3, ls='-',
+                     label='Sigma-clipped flux')
+            plt.xlim([time[0],time[0]+2*period])
+            plt.title('Time-sorted sigma-clipped',fontsize=12)
+            plt.legend()
 
         ###################################################################
         # Remove flares from the smoothed flux - Use pandas' rolling_median
@@ -323,15 +347,14 @@ class Lightcurve(object):
         ###
         # Remove transits for now
         no_transit = np.where((phase < phase_start) | (phase > phase_end))[0]
-        flux_smooth_no_transit = np.interp(time, time[no_transit],
-                gaussian_filter(flux_smooth[no_transit], 1, order=0))
+        flux_smooth_no_transit = np.interp(time, time[no_transit],flux_smooth[no_transit])
 
         # Define boxcars on the number of observations per period
-        box_percentages = np.array([0.10, 0.08, 0.05])
+        box_percentages = np.array([0.10])
         boxcars = np.round(period/np.diff(time)[0] * box_percentages)
 
-        # Use pandas rolling median function with three different boxcar windows.
-        outliers = []
+        # Use pandas rolling median function
+        # Only one window is necessary, keeping in for loop just in case.
         for box in boxcars:
             # Treshold for outlier identification
             threshold = 3
@@ -365,34 +388,43 @@ class Lightcurve(object):
         else:
             flux_smooth_new = flux_smooth_no_transit
 
+        # Final smoothed flux
+        self.flux_smooth = flux_smooth_new
+
+        # Organize the outliers from the rolling median
+        self.flare_candidate_indices = np.array(sorted(set(outliers))).astype('int')
+
         if self.check:
             plt.figure()
             plt.plot(time,flux, c='black', lw=3, label='raw')
             plt.plot(time,flux_smooth_new, c='orange',lw=1.5,
                      label='smoothed flux')
+            plt.scatter(time[self.flare_candidate_indices],
+                        flux[self.flare_candidate_indices],
+                        c='red', s=50, alpha=0.5,
+                        label='candidate flares')
+            plt.xlim([time[0],time[0]+2*period])
+            plt.legend()
             plt.show()
 
-        # Final smoothed flux
-        self.flux_smooth = flux_smooth_new
-
-        # Organize the outliers from the rolling median
-        self.flare_candidates = np.array(sorted(set(outliers))).astype('int')
-
     def flareprobs(self):
-        # Vet the flare candidates
+        print """First pass at validating flares by making sure flux increase is
+                 greater than 3standard deviations about mean
+              """
 
-    #def flarebyeye(self):
+    def flarebyeye(self):
+        print """Second pass at flare validation. Here they are checked by eye
+                 using an outside IDL software packaged, fbeye.pro
+              """
 
-    #def measureflareproperties(self):
+    def measureflareprops(self):
+        print """Measure properties of validated^2 flares
+              """
 
-
-    #def self(flarebyeye):
-
-def main(inputLightCurve):
-
+def main(inputLightCurve, check=False):
     ##########################################################
     # Initiate the lightcurve and perform most of the analysis.
-    lc = Lightcurve(inputLightCurve)
+    lc = Lightcurve(inputLightCurve, check=check)
 
 if __name__ == '__main__':
     main()
