@@ -8,7 +8,7 @@ photometric data in two different cadences: long-cadence (30-minute exposures)
 and short-cadence (1-minute exposures). Examples of light curves for each the
 long-cadence and short-cadence data are shown below.
 
-![paper_lightcurves.pdf](https://github.com/dylanpmorgan/koi256/files/168187/paper_lightcurves.pdf)
+![paper_lightcurves](https://cloud.githubusercontent.com/assets/10521443/13688902/e00c4c06-e6f2-11e5-926d-8f3c18ed2473.png)
 
 ## Smoothing the flux
 To measure flares we find need a baseline from which to measure their properties.
