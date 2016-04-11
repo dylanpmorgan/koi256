@@ -189,7 +189,18 @@ class lightcurve(object):
 
         return newLC
 
-    def __init__(self, inputLightCurve, check=False):
+    def __init__(self, inputLightCurve,
+                 _ubersmoother=True,
+                 _ubersmoother_chk=False,
+                 _flarebyprobs=True,
+                 _flarebyprobs_chk=False,
+                 _flarebyeye=True,
+                 _flarebyeye_chk=False):
+        #######
+        # _...[0] = True, run function
+        # _...[1] = True, show checks along the way
+        #######
+
         # Find full path of input lightcurve
         inputLightCurve = glob.glob(localPath+'data/'+inputLightCurve)
 
@@ -197,7 +208,9 @@ class lightcurve(object):
         data = tbl.Table.read(inputLightCurve[0], path='Data')
 
         self.filename = inputLightCurve[0]
-        self.check = check
+        #self.ubersmoother_chk = _ubersmoother_chk
+        #self.flarebyprobs_chk = _flarebyprobs_chk
+        #self.flarebyeye_chk = _flarebyeye_chk
         self.time = np.array(data['time'])
         self.phase = np.array(((data['time'] - ephemeris) % period)/period)
         self.flux = np.array(data['flux'])
@@ -209,16 +222,16 @@ class lightcurve(object):
 
         # Smooth the data to get rid of flares while preserving rotational
         # modulation by spots and WD occultations
-        self.ubersmoother()
-
-        # Use smoothed flux to normalize. Mask out occultations
-        self.normalize()
+        if _ubersmoother:
+            self.ubersmoother(check=self.ubersmoother_chk)
 
         # First pass to probabilistically identify flare candidates.
-        self.flarebyprobs()
+        if _flarebyprobs:
+            self.flarebyprobs(check=self.flarebyprobs_chk)
 
         # Validate candidate flares by eye.
-        self.flarebyeye()
+        if _flarebyeye:
+            self.flarebyeye(check=self.flarebyeye_chk)
 
     def clean(self):
         #####
@@ -270,14 +283,48 @@ class lightcurve(object):
         #######################
         # Normalize lightcurves
         no_transits = np.where((self.phase < 0.73) | (self.phase > 0.78))[0]
-        median = np.nanmedian(self.flux_smooth)
+        median = np.nanmedian(self.flux_smooth[no_transits])
 
-        self.flux_norm = self.flux / median
-        self.flux_flat = self.flux / self.flux_smooth
+        self.flux_norm = (self.flux - median) / median
         self.ferr_norm = self.ferr / median
-        self.flux_smooth_norm = self.flux_smooth / median
 
-    def ubersmoother(self):
+        self.flux_flat = (self.flux - self.flux_smooth) / median
+        self.ferr_flat = self.ferr / median
+
+        self.flux_smooth_norm = (self.flux_smooth - median) / median
+
+    def ubersmoother(self,check=False):
+        def plot_ubersmoother(x, y, idx, idx0, smooth=False, labels=None):
+            # Plot various steps of the smoothing process
+            ax.scatter(x, y, s=40, alpha=0.2)
+
+            try:
+                idx0_len = len(idx0)
+            except:
+                idx0_len = 0
+
+            if idx0_len > 0:
+                ax.scatter(x[idx0], y[idx0],
+                           marker='x', c='black', lw=1.5, s=60,
+                           label='removed previously')
+
+            ax.scatter(x[idx], y[idx],
+                      marker='x', c='red', lw=2.5, s=60,
+                      label='removed this loop')
+            if smooth:
+                ax.plot(x,np.interp(x, x[~idx], y[~idx]),
+                        c='orange', lw=2,
+                        label='smoothed')
+
+            # Set axis
+            ax.axis([np.min(x), np.max(x), np.min(y)*0.98, np.max(y)*1.02])
+
+            # Set labels
+            ax.legend(loc='best')
+            ax.set_title(labels[0])
+            ax.set_xlabel(labels[1])
+            ax.set_ylabel(labels[2])
+
         #######################
         # Initializing variables
         time = self.time
@@ -287,7 +334,8 @@ class lightcurve(object):
 
         # Find the number of full periods in lightcurve
         n_epochs = float(len(flux))
-        n_epochs_period = float(len(np.where((time >= time[0]) & (time < time[0]+period))[0]))
+        n_epochs_period = float(len(np.where((time >= time[0]) &
+                (time < time[0]+period))[0]))
         n_full_periods = np.ceil(n_epochs / n_epochs_period)
 
         # Append nans to flux so there an integer number of periods
@@ -315,8 +363,10 @@ class lightcurve(object):
             n_slices = n_full_periods
         else: n_slices = 10
 
+        if check:
+            plt_ct = 1
+
         for p in np.arange(1,n_slices):
-            #outlier_mask2 = np.zeros(flux.shape,dtype=bool)
             for s in np.arange(0,n_full_periods-p):
                 indices = [0,p]+s
 
@@ -350,6 +400,21 @@ class lightcurve(object):
                     outlier_idx = difference > threshold
                     outlier_mask[ind_region_phasesort] = outlier_idx
 
+                    if check and s==0:
+                        fig = plt.figure()
+                        ax = fig.add_subplot(111)
+
+                        labels = ['Rolling Media on 1-folded Period Slices',
+                                  'Flux (counts)',
+                                  'Phase']
+                        plot_ubersmoother(phase_region_phasesort,
+                                          flux_region_phasesort,
+                                          outlier_idx,
+                                          None,
+                                          labels=labels)
+
+                        plt.show()
+
                 else:
                     ###################################
                     # Median_filtering + sigma_clipping.
@@ -358,12 +423,32 @@ class lightcurve(object):
                     flux_region_filt = median_filter(flux_region_phasesort,
                             size=box, mode="reflect")#,
                             #cval=np.median(flux_region_phasesort))
-                    clip = sigma_clip(flux_region_phasesort - flux_region_filt, 3)
+                    clip = sigma_clip(flux_region_phasesort - flux_region_filt, 2.0)
 
                     # Sort clip into time spacing and save outliers in outliermask
                     timesort = np.argsort(time_region_phasesort)
                     clip_timesort = clip[timesort]
                     outlier_mask[ind_region[np.where(clip_timesort.mask == True)[0]]] = True
+
+                    if check and s==0 and p in [2,3,9]:
+                        if plt_ct == 1:
+                            fig = plt.figure(figsize=(12,6))
+
+                        ax = fig.add_subplot(3,1,plt_ct)
+                        labels = ['Sigma Clipping on %s-folded Period Slices' %(p),
+                                  'Phase',
+                                  'Flux (counts)']
+                        plot_ubersmoother(phase_region_phasesort,
+                                          flux_region_phasesort,
+                                          clip.mask,
+                                          outlier_mask[ind_region_phasesort],
+                                          labels=labels)
+
+                        if plt_ct == 3:
+                            fig.subplots_adjust(hspace=0.30)
+                            plt.show()
+                        else:
+                            plt_ct+=1
 
         # Interpolate across missing points
         flux_smooth = np.interp(time, time[~outlier_mask], flux[~outlier_mask])
@@ -383,16 +468,34 @@ class lightcurve(object):
             flux_smooth_no_transit[only_transit] = flux_smooth_transit[only_transit]
             flux_smooth_final = flux_smooth_no_transit
 
+        if check:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+
+            ax.plot(time, flux, '-ko', alpha=0.4)
+            ax.plot(time, flux_smooth_final, c='green', lw=2, alpha=0.7)
+
+            ax.axis([np.min(time), np.max(time),
+                     np.min(flux)*0.98, np.max(flux)*1.02])
+
+            ax.set_title('Final Smoothed Flux')
+            ax.set_xlabel('Time (days)')
+            ax.set_ylabel('Flux (counts')
+            plt.show()
+
         self.flux_smooth = flux_smooth_final
         self.outlier_mask = outlier_mask
 
-    def flarebyprobs(self):
+        # Use smoothed flux to normalize. Mask out occultations
+        self.normalize()
+
+    def flarebyprobs(self,check=False):
         print """First pass at validating flares by making sure flux increase is
                  greater than 3standard deviations about mean
               """
 
         if 'SC' in self.filename:
-            epochs_req = 2
+            epochs_req = 3
             prob_threshold = 1. / 370.398
         elif 'LC' in self.filename:
             epochs_req = 1
@@ -408,28 +511,31 @@ class lightcurve(object):
         time = self.time
         phase = self.phase
         flux = self.flux
+        flux_norm = self.flux_norm
         ferr = self.ferr
+        ferr_norm = self.ferr_norm
         flux_smooth = self.flux_smooth
         flux_flat = self.flux_flat
 
         # Flatten the flux by the smoothed flux (flares removed)
         # This removes the rotational modulation and leaves behind
         # only flares.
-        msk = np.where((phase < 0.74) | (phase > 0.78))[0]
-        flux_flat_msk = flux_flat[msk]
+        #msk = np.where((phase < 0.74) | (phase > 0.78))[0]
+        #flux_flat_msk = flux_flat[msk]
 
         # Sigma_clipping to get a more precise mean.
-        sig_clip = sigma_clip(flux_flat_msk, 3)
-        mu = np.mean(flux_flat_msk[~sig_clip.mask])
-        std = np.std(flux_flat_msk[~sig_clip.mask])
+        #sig_clip = sigma_clip(flux_flat_msk, 3)
+        #mu = np.mean(flux_flat_msk[~sig_clip.mask])
+        #std = np.std(flux_flat_msk[~sig_clip.mask])
 
-        prob = [norm(mu, std).cdf(each) for each in flux_flat]
-        prob = np.array(prob)
+
+        #prob = [norm(mu, std).cdf(each) for each in flux_flat]
+        prob = np.array(flux_flat)
         ind = np.arange(len(prob))
 
         # 3-standard deviation detection limit weighted by the # of observations
         n_epochs = np.float(len(self.flux))
-        #prob_threshold = (1./n_epochs)/99.753
+        #prob_threshold = prob_threshold / n_epochs
 
         fc_inds = np.array(0)
         # Reshape the probabilty array into groupings of two, three, and four
@@ -462,11 +568,31 @@ class lightcurve(object):
                 prob_reshape = np.reshape(prob_shift, (len(prob_shift)/nn, nn))
                 ind_reshape = np.reshape(ind_shift, (len(ind_shift)/nn, nn))
 
+                probs = []
+                for i, each in enumerate(prob_reshape):
+                    if i < 3*nn:
+                        i_inds = np.arange(0,(i+1)+6*nn)
+                        i_inds = i_inds[i_inds != i]
+                    elif i >= (len(prob_reshape)-3*nn):
+                        i_inds = np.arange((i-1)-6*nn, len(prob_reshape))
+                        i_inds = i_inds[i_inds != i]
+                    else:
+                        i_inds = np.arange(i-3*nn,(i+1)+3*nn)
+                        i_inds = i_inds[i_inds != i]
+
+                    mu = np.mean(np.ravel(prob_reshape)[i_inds])
+                    std = np.std(np.ravel(prob_reshape)[i_inds])
+
+                    probs.append(norm(mu, std).cdf(each))
+
+                probs = np.array(np.ravel(probs))
+                probs_reshape = np.reshape(probs, (len(prob_shift)/nn, nn))
+
                 # Multiply together each element in the rows of prob_reshape
                 if nn > 1:
-                    prob_mult = np.array([mult(x) for x in prob_reshape])
+                    prob_mult = np.array([mult(x) for x in probs_reshape])
                 else:
-                    prob_mult = np.array(prob_reshape)
+                    prob_mult = np.array(probs_reshape)
 
                 flare_candidates = np.where((1.-prob_mult) < prob_threshold)[0]
 
@@ -514,7 +640,10 @@ class lightcurve(object):
         # Save to class object
         self.CandidateFlares = CandidateFlares
 
-    def flarebyeye(self):
+        if check:
+            plotfull(self, save=False)
+
+    def flarebyeye(self,check=False):
         print """Second pass at flare validation. Here they are checked by eye
                  using an outside IDL software packaged, fbeye.pro
               """
@@ -559,7 +688,7 @@ class lightcurve(object):
         # Initialize fbeye flares class
         FbeyeFlares = FlareList()
 
-        ids = np.arange(len(fbeye_inds)-1)
+        ids = np.arange(len(fbeye_inds))
         # Loop over each flare and add properties.
         for i in ids:
             # Select flare inds
@@ -580,8 +709,12 @@ class lightcurve(object):
             FbeyeFlares.append(flare0)
 
         # Save to class object
+
         self.FbeyeFlares = FbeyeFlares
         self.fbeye_check = True
+
+        if check:
+            plotfull(self, save=False)
 
     def measureflareprops(self, flare_id, inds):
         """Measure properties of validated^2 flares"""
@@ -615,7 +748,13 @@ class lightcurve(object):
 
         # Equivalent durations
         time_spacing = np.diff(self.time)[0]
-        flaredict['equiv_dur'] = (flare_times[-1] - flare_times[0])+time_spacing
+        if len(flare_fluxes) <= 1:
+            time_dur = ((flare_times[-1] - flare_times[0])+time_spacing)*86400.
+        else:
+            time_dur = ((flare_times[-1] - flare_times[0]))*86400.
+
+        flaredict['durations'] = time_dur
+        flaredict['equiv_dur'] = np.trapz(flare_fluxes_flat,x=flare_times*86400.)
 
         # Flare sizes
         sig0 = np.trapz(flare_fluxes - flare_fluxes_smooth)
@@ -632,10 +771,10 @@ class lightcurve(object):
 
         return flaredict
 
-def main(inputLightCurve, check=False):
+def main(inputLightCurve):
     ##########################################################
     # Initiate the lightcurve and perform most of the analysis.
-    lc = lightcurve(inputLightCurve, check=check)
+    lc = lightcurve(inputLightCurve)
 
     plotfull(lc)
     plotsegments(lc)
@@ -658,7 +797,7 @@ def runallfiles():
 
     print 'Done'
 
-def plotfull(lc, xrange=None):
+def plotfull(lc, save=True):
     """ Plot the basic lightcurve - Uses flux error shadows """
     if "LC" in lc.filename:
         symsize = 10.
@@ -694,7 +833,7 @@ def plotfull(lc, xrange=None):
     # Plotting region ranges
     xmin, xmax = np.nanmin(time), np.nanmax(time)
     ymin = np.nanmin(flux_norm)
-    ymax = np.nanmax(flux_norm*1.02)
+    ymax = np.nanmax(flux_norm+0.02)
     ax1.set_xlim([xmin,xmax])
     ax1.set_ylim([ymin,ymax])
 
@@ -723,7 +862,7 @@ def plotfull(lc, xrange=None):
         flare_size_norm = np.array(lc.FbeyeFlares.flare_size_norm)
         snr = np.array(lc.FbeyeFlares.snr)
 
-        ax1.scatter(peak_time, peak_flux_norm*1.01,s=flare_size*flare_buff,
+        ax1.scatter(peak_time, peak_flux_norm+0.01,s=flare_size*flare_buff,
                 marker='o', facecolors='none', edgecolor=f_color, lw=1.5)
     else:
         # Otherwise plot the candidate flares
@@ -745,14 +884,17 @@ def plotfull(lc, xrange=None):
     fig.text(0.5, 0.92, 'Full Light Curve: %s' % title,
              fontsize=24, ha='center')
     # Y-axis title
-    fig.text(0.06, 0.5, 'Normalized Flux', fontsize=18,
+    fig.text(0.05, 0.5, '$\Delta$F/F', fontsize=20,
              ha='center', va='center', rotation='vertical')
     # X-axis title
     plt.xlabel('Time (days)', fontsize=18)
     # Save plot
-    #plt.show()
-    plt.savefig(plot_fname, bbox_inches='tight', dpi=400)
-    plt.close()
+
+    if save:
+        plt.savefig(plot_fname, bbox_inches='tight', dpi=400)
+        plt.close()
+    else:
+        plt.show()
 
 def plotsegments(lc):
     ##
@@ -832,7 +974,7 @@ def plotsegments(lc):
     fig.text(0.5, 0.95,'Segmented Light Curve: %s' % title,
             fontsize=24, ha='center')
     fig.text(0.90,0.02, 'Page %d' % (1), ha='left', fontsize=12)
-    fig.text(0.06, 0.5, 'Normalized Flux', fontsize=18,
+    fig.text(0.03, 0.5, '$\Delta$F/F', usetex=True, fontsize=20,
              ha='center', va='center', rotation='vertical')
 
     # Counters for plots and page number
@@ -856,7 +998,7 @@ def plotsegments(lc):
         xmin, xmax = time0[0], time0[0]+dt
         #np.nanmin(time0), np.nanmax(time0)
         ymin = np.nanmin(flux_norm0)
-        ymax = np.nanmax(flux_norm0*1.02)
+        ymax = np.nanmax(flux_norm0+0.03)
         ax.set_xlim([xmin,xmax])
         ax.set_ylim([ymin,ymax])
 
@@ -880,7 +1022,7 @@ def plotsegments(lc):
         peak_flux_norm0 = peak_flux_norm[flare0]
         flare_size0 = flare_size[flare0]
 
-        ax.scatter(peak_time0, peak_flux_norm0*1.01,s=flare_size0*flare_buff,
+        ax.scatter(peak_time0, peak_flux_norm0+0.01,s=flare_size0*flare_buff,
                 marker='o', facecolors='none', edgecolor=f_color, lw=1.5)
 
         # Plot the candidate flares
@@ -906,7 +1048,7 @@ def plotsegments(lc):
                     'Segmented Light Curve: %s' % title,
                     fontsize=24, ha='center')
             fig.text(0.90,0.02, 'Page %d' % (j), ha='left', fontsize=12)
-            fig.text(0.06, 0.5, 'Normalized Flux', fontsize=18,
+            fig.text(0.03, 0.5, '$\Delta$F/F', fontsize=20,
                      ha='center', va='center', rotation='vertical')
             # Reset plot number and increment page counter
             i=1
@@ -918,7 +1060,7 @@ def plotsegments(lc):
     pdf.close()
     plt.close()
 
-def plotphase(lc):
+def plotphase(lc, save=True):
 
     if "LC" in lc.filename:
         symsize = 25
@@ -949,7 +1091,7 @@ def plotphase(lc):
     # Set up the plot ranges
     xmin, xmax = np.nanmin(phase), np.nanmax(phase)
     ymin, ymax = np.nanmin(flux_norm), np.nanmax(flux_norm)
-    plt.axis([xmin-(0.01), xmax+(0.01), 0.99*ymin, 1.05*ymax])
+    plt.axis([xmin-(0.01), xmax+(0.01), ymin-0.01, ymax+0.05])
 
     # Plot the phased flux
     plt.scatter(phase,flux_norm, s=symsize, color='#000000',
@@ -963,19 +1105,54 @@ def plotphase(lc):
     plt.plot(phase_ps, flux_medfilt, color='#32cd32')
 
     # plot flares
-    plt.scatter(peak_phase, 1.02*peak_flux_norm, s=flare_size*flare_buff,
+    plt.scatter(peak_phase, peak_flux_norm+0.01, s=flare_size*flare_buff,
                 marker='o', facecolors='none', edgecolor='#1766B5', lw=1.5)
 
     # Finishing touches
     title = lc.filename.split('/')[-1].split('.')[0]
 
     plt.title('Phased Light Curve: %s' % title, fontsize=24)
-    plt.ylabel('Normalized Flux', fontsize=20)
+    plt.ylabel('$\Delta$F/F', fontsize=20)
     plt.xlabel('Phase', fontsize=20)
     plt.tick_params(axis='both', which='major', labelsize=20)
 
-    plt.savefig(plot_fname, bbox_inches='tight', dpi=400)
-    plt.close()
+    if save:
+        plt.savefig(plot_fname, bbox_inches='tight', dpi=400)
+        plt.close()
+    else:
+        plt.show()
+
+def show_lightcurve(lc, phased=False):
+    # Grab the lightcurve with quick=True, which means it skips all the
+    # analysis steps.
+    #inputLightCurve = glob.glob(localPath+'data/'+inputLightCurve)
+
+    # Load data
+    #data = tbl.Table.read(inputLightCurve[0], path='Data')
+
+    filename = lc.filename.split('/')[-1].split('.')[0]
+    time = lc.time
+    phase = lc.phase
+    flux = lc.flux
+    ferr = lc.ferr
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    if phased:
+        ax.plot(phase[np.argsort(phase)], flux[np.argsort(phase)],
+                'ko', alpha=0.5)
+        ax.set_xlim(0.0, 1.0)
+    else:
+        ax.plot(time, flux, '-ko', alpha=0.5)
+        ax.fill_between(time,flux-ferr,flux+ferr, color='grey', alpha=0.6)
+        ax.set_xlim(time[0],time[-1])
+
+    ax.set_title('%s' %(str(filename)), fontsize=18)
+    ax.set_xlabel('Time (days)', fontsize=16)
+    ax.set_ylabel('Flux (counts)', fontsize=16)
+
+    plt.show()
 
 if __name__ == '__main__':
     main()
