@@ -502,7 +502,7 @@ def raw_lightcurves(data):
     plt.savefig(pltpath+'paper_lightcurves.pdf', bbox_inches='tight', dpi=1)
     plt.close()
 
-def energy_time(data):
+def energy_time(data, save=True):
     # Grab vars
     flares = data.flares
 
@@ -516,12 +516,12 @@ def energy_time(data):
 
     # Plotting ranges
     xx_minmax = [np.min(x)-10.,np.max(x)+10.]
-    yy_minmax = [np.min(y)*0.98,np.max(y)*1.02]
+    yy_minmax = [31.5,np.max(y)*1.02]
 
     ###############################################################
     # Plot histograms of each quarter and observing mode separately
     fig, (ax1, ax2) = plt.subplots(2, sharex=False, sharey=True)
-    fig.set_size_inches(10,6)
+    fig.set_size_inches(12,6)
     ax1.set_xlim([xx_minmax[0], xx_minmax[1]])
     ax1.set_ylim([yy_minmax[0], yy_minmax[1]])
     ax2.set_xlim([539.6, 719.4])
@@ -652,10 +652,13 @@ def energy_time(data):
     ax1.add_artist(p2)
     ax1.plot([719.4, 719.4], [yy_minmax[0],yy_minmax[1]], linestyle=':', color='black')
 
-    plt.savefig(pltpath+'energy_time.pdf', bbox_inches='tight', dpi=100)
-    plt.close()
+    if save:
+        plt.savefig(pltpath+'energy_time.pdf', bbox_inches='tight', dpi=100)
+        plt.close()
+    else:
+        plt.show()
 
-def energy_phase(data):
+def energy_phase(data, save=True):
     # Grab vars
     flares = data.flares
 
@@ -669,7 +672,7 @@ def energy_phase(data):
     yy_minmax = [np.nanmin(y)*0.98,np.nanmax(y)*1.02]
 
     # Initialize plot
-    fig = plt.figure()
+    fig = plt.figure(figsize=(12,8))
     plt.axis([xx_minmax[0],xx_minmax[1], yy_minmax[0], yy_minmax[1]])
 
     # Add WD occultation location
@@ -697,8 +700,11 @@ def energy_phase(data):
     plt.ylabel('Flare Energy [log E$_{Kp}$ (erg)]', usetex=True,fontsize=18)
     plt.xlabel('Phase', fontsize=18)
 
-    plt.savefig(pltpath+'energy_phase.pdf', bbox_inches='tight', dpi=100)
-    plt.close()
+    if save:
+        plt.savefig(pltpath+'energy_phase.pdf', bbox_inches='tight', dpi=100)
+        plt.close()
+    else:
+        plt.show()
 
 def flare_phase_hist(data, save=True):
     # Plotting variables
@@ -708,7 +714,7 @@ def flare_phase_hist(data, save=True):
     ###############
     # Plotting time
     gs = gridspec.GridSpec(2, 2)
-    fig = plt.figure()
+    fig = plt.figure(figsize=(12,8))
 
     # Plot all flares
     ax1 = fig.add_subplot(gs[0,0])
@@ -771,7 +777,7 @@ def flare_phase_hist(data, save=True):
     else:
         plt.show()
 
-def matching_flares(data):
+def matching_flares(data, save=True):
     ###############################
     # Set up the plotting variables
     ##
@@ -952,8 +958,11 @@ def matching_flares(data):
     axPlotx.set_ylabel('Fraction of Matching Flares')
     axPlotx.legend(fontsize=10,loc='best')
 
-    plt.savefig(pltpath+'matching_flares.pdf', bbox_inches='tight', dpi=100)
-    plt.close()
+    if save:
+        plt.savefig(pltpath+'matching_flares.pdf', bbox_inches='tight', dpi=100)
+        plt.close()
+    else:
+        plt.show()
 
 def overlapping_flares(data):
     # Grab data
@@ -1090,7 +1099,7 @@ def overlapping_flares(data):
     # Close pdf
     pdf.close()
 
-def phase_activity(data):
+def phase_activity(data, save=True):
     #####################
     # Plotting variables
     phase_m = data.lc_match['peak_phase']
@@ -1221,7 +1230,7 @@ def phase_activity(data):
 
     plt.savefig(pltpath+'phase_activity.pdf', bbox_inches='tight', dpi=100)
 
-def ffd(data):
+def ffd(data, save=True):
     def fitdata(x,y):
         ms = []
         bs = []
@@ -1350,7 +1359,7 @@ def ffd(data):
     plt.savefig(pltpath+'ffd.pdf', bbox_inches='tight', dpi=100)
     plt.close()
 
-def flare_phase_hist_byenergy(data):
+def flare_phase_hist_byenergy(data, save=True):
     # Plotting variables
     phase_m = data.lc_match['peak_phase']
     phase_lcno = data.lc_nomatch['peak_phase']
@@ -1422,8 +1431,11 @@ def flare_phase_hist_byenergy(data):
              ha='center', va='center', rotation='vertical', fontsize=16)
 
     #plt.subplots_adjust(hspace=0.05)
-    plt.savefig(pltpath+'flare_phase_hist_byenergy.pdf', bbox_inches='tight', dpi=100)
-    plt.close()
+    if save:
+        plt.savefig(pltpath+'flare_phase_hist_byenergy.pdf', bbox_inches='tight', dpi=100)
+        plt.close()
+    else:
+        plt.show()
 
 if __name__ == '__main__':
     main()

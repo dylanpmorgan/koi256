@@ -223,15 +223,15 @@ class lightcurve(object):
         # Smooth the data to get rid of flares while preserving rotational
         # modulation by spots and WD occultations
         if _ubersmoother:
-            self.ubersmoother(check=self.ubersmoother_chk)
+            self.ubersmoother(check=_ubersmoother_chk)
 
         # First pass to probabilistically identify flare candidates.
         if _flarebyprobs:
-            self.flarebyprobs(check=self.flarebyprobs_chk)
+            self.flarebyprobs(check=_flarebyprobs_chk)
 
         # Validate candidate flares by eye.
         if _flarebyeye:
-            self.flarebyeye(check=self.flarebyeye_chk)
+            self.flarebyeye(check=_flarebyeye_chk)
 
     def clean(self):
         #####
@@ -296,7 +296,7 @@ class lightcurve(object):
     def ubersmoother(self,check=False):
         def plot_ubersmoother(x, y, idx, idx0, smooth=False, labels=None):
             # Plot various steps of the smoothing process
-            ax.scatter(x, y, s=40, alpha=0.2)
+            ax.scatter(x, y, s=60, alpha=0.2)
 
             try:
                 idx0_len = len(idx0)
@@ -393,20 +393,21 @@ class lightcurve(object):
                 if p == 1:
                     #########################
                     ### Rolling median method
-                    threshold = 3
+                    threshold = 3.
                     flux_pandas = rolling_median(flux_region_phasesort,
                             window=5, center=True, freq=period)
-                    difference = np.abs(flux_region_phasesort - flux_pandas)
-                    outlier_idx = difference > threshold
+                    diff = np.abs(flux_region_phasesort - flux_pandas)
+
+                    outlier_idx = diff > np.std(diff[~np.isnan(diff)])
                     outlier_mask[ind_region_phasesort] = outlier_idx
 
                     if check and s==0:
-                        fig = plt.figure()
+                        fig = plt.figure(figsize=(12,8))
                         ax = fig.add_subplot(111)
 
-                        labels = ['Rolling Media on 1-folded Period Slices',
-                                  'Flux (counts)',
-                                  'Phase']
+                        labels = ['Rolling Median on 1-folded Period Slices',
+                                  'Phase',
+                                  'Flux (counts)']
                         plot_ubersmoother(phase_region_phasesort,
                                           flux_region_phasesort,
                                           outlier_idx,
@@ -430,11 +431,11 @@ class lightcurve(object):
                     clip_timesort = clip[timesort]
                     outlier_mask[ind_region[np.where(clip_timesort.mask == True)[0]]] = True
 
-                    if check and s==0 and p in [2,3,9]:
+                    if check and s==0 and p in [2,9]:
                         if plt_ct == 1:
-                            fig = plt.figure(figsize=(12,6))
+                            fig = plt.figure(figsize=(12,12))
 
-                        ax = fig.add_subplot(3,1,plt_ct)
+                        ax = fig.add_subplot(2,1,plt_ct)
                         labels = ['Sigma Clipping on %s-folded Period Slices' %(p),
                                   'Phase',
                                   'Flux (counts)']
@@ -443,9 +444,11 @@ class lightcurve(object):
                                           clip.mask,
                                           outlier_mask[ind_region_phasesort],
                                           labels=labels)
+                        ax.plot(phase_region_phasesort, flux_region_filt,
+                                c='red', lw=1.5)
 
                         if plt_ct == 3:
-                            fig.subplots_adjust(hspace=0.30)
+                            fig.subplots_adjust(hspace=0.40)
                             plt.show()
                         else:
                             plt_ct+=1
@@ -469,11 +472,11 @@ class lightcurve(object):
             flux_smooth_final = flux_smooth_no_transit
 
         if check:
-            fig = plt.figure()
+            fig = plt.figure(figsize=(12,8))
             ax = fig.add_subplot(111)
 
-            ax.plot(time, flux, '-ko', alpha=0.4)
-            ax.plot(time, flux_smooth_final, c='green', lw=2, alpha=0.7)
+            ax.plot(time, flux, '-ko', lw=2, alpha=0.6)
+            ax.plot(time, flux_smooth_final, c="#32cd32", lw=2, alpha=0.7)
 
             ax.axis([np.min(time), np.max(time),
                      np.min(flux)*0.98, np.max(flux)*1.02])
@@ -535,7 +538,7 @@ class lightcurve(object):
 
         # 3-standard deviation detection limit weighted by the # of observations
         n_epochs = np.float(len(self.flux))
-        #prob_threshold = prob_threshold / n_epochs
+        prob_threshold = prob_threshold / n_epochs
 
         fc_inds = np.array(0)
         # Reshape the probabilty array into groupings of two, three, and four
@@ -821,7 +824,7 @@ def plotfull(lc, save=True):
 
     # Set up the two separate plotting windows.
     #fig, (ax1, ax2) = plt.subplots(2, sharex=True, sharey=True)
-    fig, ax1 = plt.subplots(1, figsize=(10,6))
+    fig, ax1 = plt.subplots(1, figsize=(12,7))
 
     # Define variables
     # Lightcurve params
@@ -1136,20 +1139,21 @@ def show_lightcurve(lc, phased=False):
     flux = lc.flux
     ferr = lc.ferr
 
-    fig = plt.figure()
+    fig = plt.figure(figsize=(12,8))
     ax = fig.add_subplot(111)
 
     if phased:
         ax.plot(phase[np.argsort(phase)], flux[np.argsort(phase)],
                 'ko', alpha=0.5)
         ax.set_xlim(0.0, 1.0)
+        ax.set_xlabel('Phase', fontsize=16)
     else:
         ax.plot(time, flux, '-ko', alpha=0.5)
         ax.fill_between(time,flux-ferr,flux+ferr, color='grey', alpha=0.6)
         ax.set_xlim(time[0],time[-1])
+        ax.set_xlabel('Time (days)', fontsize=16)
 
     ax.set_title('%s' %(str(filename)), fontsize=18)
-    ax.set_xlabel('Time (days)', fontsize=16)
     ax.set_ylabel('Flux (counts)', fontsize=16)
 
     plt.show()
